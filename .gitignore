@@ -1,0 +1,6 @@
+*.pth
+magick*
+.\venv
+.\__pycache__
+.idea
+.ipynb_checkpoints
