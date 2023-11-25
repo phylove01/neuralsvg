@@ -7,13 +7,11 @@ from PIL import Image
 import io
 from config import Config
 
-
 class SVGPNGDataset(Dataset, Config):
     def __init__(self, num_items=None, max_length_limit=4096, transform=None):
         super().__init__()
-        self.folder_path = self.pickle_save_folder
         self.file_list = sorted(
-            [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if f.endswith('.pkl')])
+            [os.path.join(self.pickle_save_folder, f) for f in os.listdir(self.pickle_save_folder) if f.endswith('.pkl')])
 
         if num_items is not None:
             # 필요한 파일의 수 계산
@@ -85,7 +83,7 @@ class SVGPNGDataset(Dataset, Config):
     def png_to_tensor(self, png_data):
         png_image = Image.open(io.BytesIO(png_data)).convert("L")  # Convert to grayscale
         png_tensor = self.transform(png_image)
-        png_tensor = png_tensor.float() / 255.0
+        png_tensor = png_tensor.float()
         return png_tensor.repeat(3, 1, 1)
 
     def get_max_svg_length(self):
@@ -123,28 +121,34 @@ class SVGPNGDataset(Dataset, Config):
         return trimmed_data
 
 
-class EarlyStopping:
+class EarlyStopping(Config):
     def __init__(self, patience=5, delta=0):
+        super().__init__()
         self.patience = patience
         self.counter = 0
         self.best_score = None
         self.delta = delta
+        self.save_path = '.'
 
-    def __call__(self, val_loss, model, path):
-        score = -val_loss
+    def __call__(self, val_loss, model):
+        score = - val_loss
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(val_loss, model, path)
+            self.save_checkpoint(model)
         elif score < self.best_score + self.delta:
             self.counter += 1
             if self.counter >= self.patience:
                 return True
         else:
             self.best_score = score
-            self.save_checkpoint(val_loss, model, path)
+            self.save_checkpoint(model)
             self.counter = 0
         return False
 
-    def save_checkpoint(self, val_loss, model, path):
-        torch.save(model.state_dict(), path)
-        model.svgencoder.save_best_rff(path="best_rff.pt")
+    def save_checkpoint(self, model):
+        if not os.path.exists(self.save_path):
+            os.mkdir(self.save_path)
+        file = os.path.join(self.save_path,'best_'+ model.form + '.pth')
+        torch.save(model.state_dict(), file)
+
+

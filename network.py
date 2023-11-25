@@ -1,23 +1,42 @@
 import torch.nn as nn
-import pickle
+import numpy as np
+import torch
+from dotenv import load_dotenv
 import os
-import torch
-from torch.utils.data import Dataset
-from torchvision import transforms
-import numpy as np
-import pandas as pd
-from torch.utils.data import Dataset, DataLoader
-from PIL import Image
-import io
-import torch.nn.functional as F
-from config import Config
-import numpy as np
-import torch
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
+from vqgan_pytorch.vqgan import VQGAN
+from config import Config
 
 
-config = Config()
+load_dotenv()
 PADDING_VALUE = -1
+
+epochs = int(os.getenv('epochs'))
+lr = float(os.getenv('lr'))
+patience = int(os.getenv('patience'))
+batch_size = int(os.getenv('batch_size'))
+image_size = int(os.getenv('image_size'))
+
+
+class Model(nn.Module):
+    def __init__(self, form, device='cpu'):
+        super(Model, self).__init__()
+        self.form = form
+        config = Config()
+        if form == 'diffusion':
+            backbone_model = Unet(dim=64,
+                                  dim_mults=(1, 2, 4, 8),
+                                  flash_attn=True).to(device)
+
+            self.model = GaussianDiffusion(backbone_model,
+                                           image_size=image_size,
+                                           timesteps=1000).to(device)
+        elif form == 'vqgan':
+            self.model = VQGAN(config.args)
+            self.model = self.model.to(device)
+
+    def forward(self, x):
+        return self.model(x)
 
 class SVGEncoder(nn.Module):
     def __init__(self, vocab_size=1024, embed_size=256, num_layers=6, heads=8, dropout=0.1,
@@ -25,7 +44,7 @@ class SVGEncoder(nn.Module):
         super(SVGEncoder, self).__init__()
 
         self.device = device
-        self.command_embedding = nn.Embedding(6+1, embed_size)  # Change here
+        self.command_embedding = nn.Embedding(6 + 1, embed_size)  # Change here
 
         # Positional Encoding
         self.positions = torch.arange(max_len).unsqueeze(1).to(self.device)
@@ -88,8 +107,6 @@ class SVGEncoder(nn.Module):
         return x
 
 
-
-
 class SVGDecoder(nn.Module):
     def __init__(self, vocab_size, embed_size=512, num_layers=6, heads=8, dropout=0.1,
                  max_len=1000, latent_dim=512, device='cpu'):
@@ -142,6 +159,7 @@ class DDPMFeatureExtractor(torch.nn.Module):
         features = self.model.denoise_fn(noisy_images, timesteps)
         return features
 
+
 class LanguageModelToDDPM(torch.nn.Module):
     def __init__(self, language_model, ddpm_model):
         super().__init__()
@@ -160,7 +178,6 @@ class LanguageModelToDDPM(torch.nn.Module):
         # DDPM을 사용하여 이미지 생성
         generated_images = self.ddpm_model.p_sample_loop(mapped_features, model.num_timesteps)
         return generated_images
-
 
 
 class SVGPNGModel(nn.Module):

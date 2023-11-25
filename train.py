@@ -1,32 +1,43 @@
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-from config import Config
 from util import SVGPNGDataset, EarlyStopping
-from network import SVGEncoder, SVGDecoder, SVGPNGModel
 from torchvision import transforms
-from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
 import tqdm
+from dotenv import load_dotenv
+from network import Model
+from vqgan_pytorch.training_vqgan import TrainVQGAN
+from config import Config
+import numpy as np
+import torch.nn.functional as F
+from torchvision import utils as vutils
+import warnings
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(device)
 
-epochs = 100
-lr = 0.001
-patience = 5
-batch_size = 16
-image_size = 24
-num_epochs = 10
+config = Config()
+args = config.args
+device = config.device
+load_dotenv()
+warnings.filterwarnings("ignore")
+
+print('datapath: ', config.path)
+print('device: ', config.device)
+
+epochs = int(os.getenv('epochs'))
+lr = float(os.getenv('lr'))
+patience = int(os.getenv('patience'))
+batch_size = int(os.getenv('batch_size'))
+image_size = int(os.getenv('image_size'))
+num_item = int(os.getenv('num_item'))
+max_length_limit = int(os.getenv('max_length_limit'))
 
 transform = transforms.Compose([
     transforms.Resize((image_size, image_size)),
-    transforms.Grayscale(),
     transforms.ToTensor(),
 ])
 
-dataset = SVGPNGDataset(num_items=10000, max_length_limit=1024, transform=transform)
+dataset = SVGPNGDataset(num_items=num_item, max_length_limit=max_length_limit, transform=transform)
 vocab_size = max(dataset.get_max_svg_length(), dataset.max_length_limit)
 
 train_size = int(0.8 * len(dataset))
@@ -39,58 +50,95 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 print("vocab_size: ", vocab_size)
 print(len(train_dataset), len(test_dataset))
 
-criterion_svg_cmd = nn.CrossEntropyLoss().to(device)
-criterion_svg_coordinate = nn.L1Loss().to(device)
+model = Model(os.getenv('model'), device=device)
+vg = TrainVQGAN(args)
 
-criterion_png = nn.MSELoss().to(device)
-criterion_z = nn.L1Loss().to(device)
-
-model = Unet(dim=64,
-             dim_mults=(1, 2, 4, 8),
-             flash_attn=True).to(device)
-
-diffusion = GaussianDiffusion(model,
-                              image_size=image_size,
-                              timesteps=1000).to(device)
+criterion = torch.nn.MSELoss().to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, verbose=True)
+early_stopping = EarlyStopping(patience=patience, delta=0)
+best_loss = float('infinity')
+best_model = None
 
-early_stopping = EarlyStopping(patience=2 * patience, delta=0)
-best_loss = 10000
-
-# 학습 루프
-for epoch in range(num_epochs):
+for epoch in range(epochs):
     train_loss, test_loss = 0, 0
+    model.train()
 
-    diffusion.train()
+    idx = 0
     for batch in tqdm.tqdm(train_loader, desc='train'):
-        loss = diffusion(batch['png_tensor'])
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        train_loss += loss.item()
+        target = batch['png_tensor'].to(device)
+        if model.form == 'diffusion':
+            loss = model(target)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        elif model.form == 'vqgan':
+            decoded_images, _, q_loss = vg.vqgan(target)
+
+            disc_real = vg.discriminator(target)
+            disc_fake = vg.discriminator(decoded_images)
+            disc_factor = vg.vqgan.adopt_weight(args.disc_factor, epoch * len(target) + idx,
+                                                              threshold=args.disc_start)
+
+            perceptual_loss = vg.perceptual_loss(target, decoded_images)
+            rec_loss = torch.abs(target - decoded_images)
+            perceptual_rec_loss = args.perceptual_loss_factor * perceptual_loss + args.rec_loss_factor * rec_loss
+            perceptual_rec_loss = perceptual_rec_loss.mean()
+            g_loss = -torch.mean(disc_fake)
+
+            λ = vg.vqgan.calculate_lambda(perceptual_rec_loss, g_loss)
+            vq_loss = perceptual_rec_loss + q_loss + disc_factor * λ * g_loss
+            d_loss_real = torch.mean(F.relu(1. - disc_real))
+            d_loss_fake = torch.mean(F.relu(1. + disc_fake))
+            gan_loss = disc_factor * 0.5 * (d_loss_real + d_loss_fake)
+
+            vg.opt_vq.zero_grad()
+            vq_loss.backward(retain_graph=True)
+
+            vg.opt_disc.zero_grad()
+            gan_loss.backward()
+
+            vg.opt_vq.step()
+            vg.opt_disc.step()
+
+            real_fake_images = torch.cat((target[:4], target[:4]))#decoded_images.add(1).mul(0.5)[:6]))
+            vutils.save_image(real_fake_images, os.path.join(config.save_path, f"train_{epoch}_{idx}.jpg"), nrow=4)
+
+            VQ_Loss = np.round(vq_loss.cpu().detach().numpy().item(), 5),
+            GAN_Loss = np.round(gan_loss.cpu().detach().numpy().item(), 5)
+            #print('VQ_Loss: ', VQ_Loss, 'GAN_Loss: ', GAN_Loss)
+
+            loss = VQ_Loss + GAN_Loss
+            idx += 1
+
+        train_loss += loss
     train_loss /= len(train_loader)
 
-    diffusion.eval()
+    model.eval()
     for batch in train_loader:
-        loss = diffusion(batch['png_tensor'])
-        test_loss += loss.item()
-    test_loss /= len(test_loader)
-
-    print(f"Epoch [{epoch + 1}/{epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}")
+        target = batch['png_tensor'].to(device)
+        if model.form == 'diffusion':
+            loss = model(target)
+            test_loss /= len(test_loader)
+        elif model.form == 'vqgan':
+            with torch.no_grad():
+                decoded_images, _, q_loss = vg.vqgan(target)
+                real_fake_images = torch.cat((target[:4], decoded_images.add(1).mul(0.5)[:4]))
+                vutils.save_image(real_fake_images, os.path.join(config.save_path, f"test_{epoch}_{idx}.jpg"), nrow=4)
+    if model.form == 'vqgan':
+        test_loss = train_loss
 
     scheduler.step(test_loss)
 
     if test_loss < best_loss:
         best_loss = test_loss
-        torch.save(diffusion.state_dict(), os.path.join(dataset.path, 'best_encoder.pth'))
+        print(f"Epoch [{epoch + 1}/{epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}")
 
-    #if early_stopping(test_loss, diffusion, os.path.join(dataset.path, 'best_encoder.pth')):
-    #    print("Early stopping")
-    #    break
-
-sampled_images = diffusion.sample(batch_size=4)
+    if early_stopping(test_loss, model):
+        print("Early stopping")
+        break
 
 # model = SVGPNGModel(vocab_size=vocab_size, init_rff=True, device=device)
 
