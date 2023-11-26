@@ -51,3 +51,14 @@ elif model.form == "vqgan"
             sns.heatmap(reconstructed_image[idx])
             plt.show()
 
+   model.eval()
+    for batch in train_loader:
+        target = batch['png_tensor'].to(device)
+        if model.form == 'diffusion':
+            loss = model(target)
+            test_loss /= len(test_loader)
+        elif model.form == 'vqgan':
+            with torch.no_grad():
+                decoded_images, _, q_loss = model(target)
+                real_fake_images = torch.cat((target[:4], decoded_images.add(1).mul(0.5)[:4]))
+                vutils.save_image(real_fake_images, os.path.join(config.save_path, f"test_{epoch}_{idx}.jpg"), nrow=4)

@@ -4,5 +4,6 @@ magick*
 .\__pycache__
 .idea
 .ipynb_checkpoints
-.result
-.vgg_lpips
+.\result
+.\vgg_lpips
+*.log

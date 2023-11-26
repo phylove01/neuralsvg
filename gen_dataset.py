@@ -1,11 +1,8 @@
 import os
 import re
 import pandas as pd
-from PIL import Image
-import numpy as np
 import pickle
 from tqdm import tqdm
-import io
 from config import Config
 
 config = Config()

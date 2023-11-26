@@ -19,10 +19,10 @@ class Config:
         self.dataset_folder = os.path.join(self.path, "dataset")
         self.chunk = CHUNK
         self.max_svg_length = MAX_SVG_LENGTH
-        self.svg_root_folder = os.path.join(self.path, "output_svg")
-        self.png_root_folder = os.path.join(self.path, "output_png")
+        self.svg_root_folder = os.path.join(self.path, "svg")
+        self.png_root_folder = os.path.join(self.path, "png")
         self.pickle_save_folder = self.dataset_folder
-        self.error_log_path = os.path.join(self.path, "error_dataset_log.txt")
+        self.error_log_path = os.path.join(self.path, "dataset.err")
         self.save_path = os.path.join(self.path, 'save')
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.gen_pickle_save_folder()
@@ -34,7 +34,7 @@ class Config:
         parser.add_argument('--num-codebook-vectors', type=int, default=1024,
                             help='Number of codebook vectors (default: 256)')
         parser.add_argument('--beta', type=float, default=0.25, help='Commitment loss scalar (default: 0.25)')
-        parser.add_argument('--image-channels', type=int, default=3, help='Number of channels of images (default: 3)')
+        parser.add_argument('--image-channels', type=int, default=1, help='Number of channels of images (default: 1)')
         parser.add_argument('--dataset-path', type=str, default= self.dataset_folder, help='Path to data (default:'+self.dataset_folder+' )')
         parser.add_argument('--device', type=str, default=self.device, help='Which device the training is on')
         parser.add_argument('--batch-size', type=int, default=int(os.getenv('batch_size')), help='Input batch size for training (default: 6)')

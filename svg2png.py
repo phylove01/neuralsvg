@@ -1,13 +1,16 @@
 import os
+import time
+
 from wand.image import Image
 from wand.color import Color
 import pathlib
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
-
+time.sleep(5000)
 # Input and output folders
-input_folder_path = r'C:\Users\이수용\Desktop\fonts-main\output_svg'
-output_folder_path = r'C:\Users\이수용\Desktop\fonts-main\output_png'
+root_folder_path = r'C:\Users\이수용\Desktop\fonts-main'
+input_folder_path = r'C:\Users\이수용\Desktop\fonts-main\svg'
+output_folder_path = r'C:\Users\이수용\Desktop\fonts-main\png'
 
 # Ensure the output folder exists
 pathlib.Path(output_folder_path).mkdir(parents=True, exist_ok=True)
@@ -24,8 +27,9 @@ def convert_svg_to_png(svg_path, png_path):
             svg_image.resize(1000, 1000)  # Resize the image to 1000x1000
             svg_image.save(filename=png_path)
     except Exception as e:
-        with open('error_svg2png.log', 'a') as log_file:
-            log_file.write(f"Error converting {svg_path} to PNG: {str(e)}\n")
+        log_file = root_folder_path + 'svg2png.err'
+        with open(log_file, 'a') as log:
+            log.write(f"Error converting {svg_path} to PNG: {str(e)}\n")
 
 
 # List to store conversion tasks
@@ -48,6 +52,5 @@ with ThreadPoolExecutor() as executor, tqdm(total=total_svg_count, unit="file", 
     def task_wrapper(args):
         convert_svg_to_png(*args)
         pbar.update(1)
-
 
     list(executor.map(task_wrapper, conversion_tasks))

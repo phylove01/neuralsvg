@@ -84,7 +84,7 @@ class SVGPNGDataset(Dataset, Config):
         png_image = Image.open(io.BytesIO(png_data)).convert("L")  # Convert to grayscale
         png_tensor = self.transform(png_image)
         png_tensor = png_tensor.float()
-        return png_tensor.repeat(3, 1, 1)
+        return png_tensor.repeat(1, 1, 1)
 
     def get_max_svg_length(self):
         max_length = 0
@@ -122,7 +122,7 @@ class SVGPNGDataset(Dataset, Config):
 
 
 class EarlyStopping(Config):
-    def __init__(self, patience=5, delta=0):
+    def __init__(self, patience=50, delta=0):
         super().__init__()
         self.patience = patience
         self.counter = 0
@@ -148,7 +148,10 @@ class EarlyStopping(Config):
     def save_checkpoint(self, model):
         if not os.path.exists(self.save_path):
             os.mkdir(self.save_path)
-        file = os.path.join(self.save_path,'best_'+ model.form + '.pth')
+        file = os.path.join(self.save_path,'best_vqgan.pth')
         torch.save(model.state_dict(), file)
-
+        file_encoder = os.path.join(self.save_path,'best_vqgan_encoder.pth')
+        torch.save(model.encoder.state_dict(), file)
+        file_decoder = os.path.join(self.save_path,'best_vqgan_encoder.pth')
+        torch.save(model.decoder.state_dict(), file)
 
